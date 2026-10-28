@@ -25,6 +25,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Build, inspect, load, regress and stop disposable database
+        timeout-minutes: 25
         run: ./build.ps1
       - name: Attest tested package
         id: attest
@@ -45,6 +46,6 @@ jobs:
       - name: Verify cleanup even after failure
         if: always()
         run: ./cleanup.ps1
-      - name: Preserve public diagnostic logs on failure without artifact storage
-        if: failure()
+      - name: Preserve public diagnostics on failure or cancellation without artifact storage
+        if: always() && (failure() || cancelled())
         run: ./emit-log.ps1 -DiagnosticsOnly

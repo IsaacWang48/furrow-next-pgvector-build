@@ -22,29 +22,225 @@ if (Test-Path -LiteralPath $work) { throw 'Fresh task-owned work directory requi
 $null = New-Item -ItemType Directory -Path $work
 function Save-Json($Name, $Value) { $Value | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath "$logs/$Name" -Encoding utf8NoBOM }
 function Hash($Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
+# File redirection prevents a server descendant from retaining a pipe that
+# ReadToEndAsync would otherwise wait on after its parent pg_ctl exits.
+$script:buildDeadline=[DateTimeOffset]::UtcNow.AddMinutes(23)
+$processRunner=@'
+"""Windows commands: direct files, suspended job assignment, bounded tree cleanup."""
+import ctypes as C
+from ctypes import wintypes as W
+import datetime
+import json
+import msvcrt
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+
+class Limits(C.Structure):
+    _fields_ = [("process_time", C.c_longlong), ("job_time", C.c_longlong),
+                ("flags", W.DWORD), ("min_working", C.c_size_t),
+                ("max_working", C.c_size_t), ("active_limit", W.DWORD),
+                ("affinity", C.c_size_t), ("priority", W.DWORD), ("scheduling", W.DWORD)]
+
+
+class IO(C.Structure):
+    _fields_ = [(n, C.c_ulonglong) for n in ("read_ops", "write_ops", "other_ops",
+                                          "read_bytes", "write_bytes", "other_bytes")]
+
+
+class Extended(C.Structure):
+    _fields_ = [("basic", Limits), ("io", IO), ("process_memory", C.c_size_t),
+                ("job_memory", C.c_size_t), ("peak_process", C.c_size_t), ("peak_job", C.c_size_t)]
+
+
+class Accounting(C.Structure):
+    _fields_ = [(n, C.c_longlong) for n in ("user", "kernel", "period_user", "period_kernel")] + [
+        (n, W.DWORD) for n in ("page_faults", "total", "active", "terminated")]
+
+
+class Startup(C.Structure):
+    _fields_ = [("cb", W.DWORD), ("reserved", W.LPWSTR), ("desktop", W.LPWSTR),
+                ("title", W.LPWSTR)] + [(n, W.DWORD) for n in (
+                    "x", "y", "x_size", "y_size", "x_chars", "y_chars", "fill", "flags")] + [
+        ("show", W.WORD), ("reserved_size", W.WORD), ("reserved_bytes", C.POINTER(C.c_byte)),
+        ("stdin", W.HANDLE), ("stdout", W.HANDLE), ("stderr", W.HANDLE)]
+
+
+class Process(C.Structure):
+    _fields_ = [("process", W.HANDLE), ("thread", W.HANDLE),
+                ("pid", W.DWORD), ("tid", W.DWORD)]
+
+
+class StartupEx(C.Structure):
+    _fields_ = [("startup", Startup), ("attributes", C.c_void_p)]
+
+
+k = C.WinDLL("kernel32", use_last_error=True)
+for name, args, result in [
+    ("CreateJobObjectW", [C.c_void_p, W.LPCWSTR], W.HANDLE),
+    ("SetInformationJobObject", [W.HANDLE, C.c_int, C.c_void_p, W.DWORD], W.BOOL),
+    ("QueryInformationJobObject", [W.HANDLE, C.c_int, C.c_void_p, W.DWORD, C.c_void_p], W.BOOL),
+    ("AssignProcessToJobObject", [W.HANDLE, W.HANDLE], W.BOOL),
+    ("TerminateJobObject", [W.HANDLE, W.UINT], W.BOOL),
+    ("TerminateProcess", [W.HANDLE, W.UINT], W.BOOL),
+    ("CloseHandle", [W.HANDLE], W.BOOL),
+    ("ResumeThread", [W.HANDLE], W.DWORD),
+    ("WaitForSingleObject", [W.HANDLE, W.DWORD], W.DWORD),
+    ("GetExitCodeProcess", [W.HANDLE, C.POINTER(W.DWORD)], W.BOOL),
+    ("InitializeProcThreadAttributeList", [C.c_void_p, W.DWORD, W.DWORD, C.POINTER(C.c_size_t)], W.BOOL),
+    ("UpdateProcThreadAttribute", [C.c_void_p, W.DWORD, C.c_size_t, C.c_void_p,
+                                   C.c_size_t, C.c_void_p, C.POINTER(C.c_size_t)], W.BOOL),
+    ("DeleteProcThreadAttributeList", [C.c_void_p], None),
+    ("CreateProcessW", [W.LPCWSTR, W.LPWSTR, C.c_void_p, C.c_void_p, W.BOOL,
+                        W.DWORD, C.c_void_p, W.LPCWSTR, C.POINTER(Startup), C.POINTER(Process)], W.BOOL),
+]:
+    fn = getattr(k, name)
+    fn.argtypes, fn.restype = args, result
+
+
+def require(ok):
+    if not ok:
+        raise C.WinError(C.get_last_error())
+
+
+def active(job):
+    value = Accounting()
+    require(k.QueryInformationJobObject(job, 1, C.byref(value), C.sizeof(value), None))
+    return value.active
+
+
+def stop_tree(job, code):
+    require(k.TerminateJobObject(job, code))
+    deadline = time.monotonic() + 5
+    while active(job):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Owned command job still has active processes after termination")
+        time.sleep(0.02)
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+cfg = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8-sig"))
+assert isinstance(cfg["timeoutSeconds"], (int, float)) and 0 < cfg["timeoutSeconds"] <= 1440
+start, clock = now(), time.monotonic()
+result = {"exe": cfg["exe"], "args": cfg["args"], "cwd": cfg["cwd"], "started": start,
+          "timeoutSeconds": cfg["timeoutSeconds"], "timedOut": False, "treeCleanup": "NOT_STARTED"}
+job, proc, assigned, attributes = None, Process(), False, None
+try:
+    with open(os.devnull, "rb") as stdin, open(cfg["stdout"], "xb") as stdout, open(cfg["stderr"], "xb") as stderr:
+        job = k.CreateJobObjectW(None, None)
+        require(job)
+        limits = Extended()
+        limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE; no breakaway allowance.
+        require(k.SetInformationJobObject(job, 9, C.byref(limits), C.sizeof(limits)))
+        startup = StartupEx()
+        startup.startup.cb, startup.startup.flags, startup.startup.show = C.sizeof(startup), 0x101, 0
+        handles = [msvcrt.get_osfhandle(f.fileno()) for f in (stdin, stdout, stderr)]
+        for handle in handles:
+            os.set_handle_inheritable(handle, True)
+        startup.startup.stdin, startup.startup.stdout, startup.startup.stderr = handles
+        # Restrict inheritance to these three files. Passing every inheritable
+        # handle would let a server retain the supervisor's own output pipe.
+        size = C.c_size_t()
+        if k.InitializeProcThreadAttributeList(None, 1, 0, C.byref(size)) or C.get_last_error() != 122:
+            raise RuntimeError("Unexpected process attribute-list sizing result")
+        attribute_buffer = C.create_string_buffer(size.value)
+        attributes = C.cast(attribute_buffer, C.c_void_p)
+        require(k.InitializeProcThreadAttributeList(attributes, 1, 0, C.byref(size)))
+        inherited = (W.HANDLE * 3)(*handles)
+        require(k.UpdateProcThreadAttribute(attributes, 0, 0x20002, C.byref(inherited),
+                                            C.sizeof(inherited), None, None))
+        startup.attributes = attributes
+        command = C.create_unicode_buffer(subprocess.list2cmdline([cfg["exe"], *cfg["args"]]))
+        # Assign while suspended, before a child can spawn an escaping descendant.
+        require(k.CreateProcessW(cfg["exe"], command, None, None, True, 0x08080004,
+                                None, cfg["cwd"], C.byref(startup.startup), C.byref(proc)))
+        result["pid"] = proc.pid
+        require(k.AssignProcessToJobObject(job, proc.process))
+        assigned = True
+        if k.ResumeThread(proc.thread) == 0xFFFFFFFF:
+            raise C.WinError(C.get_last_error())
+        state = k.WaitForSingleObject(proc.process, int(cfg["timeoutSeconds"] * 1000))
+        if state == 258:
+            result.update(exit=124, timedOut=True)
+            stop_tree(job, 124)
+            result.update(treeCleanup="TERMINATED_ZERO_ACTIVE", remainingActive=active(job))
+        elif state == 0:
+            code = W.DWORD()
+            require(k.GetExitCodeProcess(proc.process, C.byref(code)))
+            result["exit"] = C.c_int32(code.value).value
+            if result["exit"] not in cfg.get("allowed", [0]):
+                stop_tree(job, 125)
+                result.update(treeCleanup="TERMINATED_ZERO_ACTIVE", remainingActive=active(job))
+            else:
+                # Successful pg_ctl is allowed to leave its server running until
+                # the existing separately owned PostgreSQL cleanup stops it.
+                limits.basic.flags = 0
+                require(k.SetInformationJobObject(job, 9, C.byref(limits), C.sizeof(limits)))
+                result.update(treeCleanup="PRESERVED_AFTER_ALLOWED_PARENT_EXIT", activeAtParentExit=active(job))
+        else:
+            raise C.WinError(C.get_last_error())
+except Exception as error:
+    result.update(exit=125, infrastructureError=str(error))
+    try:
+        if job and assigned:
+            stop_tree(job, 125)
+            result.update(treeCleanup="TERMINATED_ZERO_ACTIVE", remainingActive=active(job))
+        elif proc.process:
+            require(k.TerminateProcess(proc.process, 125))
+            if k.WaitForSingleObject(proc.process, 5000) != 0:
+                raise RuntimeError("Unassigned suspended process did not terminate")
+            result["treeCleanup"] = "UNASSIGNED_SUSPENDED_PROCESS_TERMINATED"
+    except Exception as cleanup_error:
+        result.update(exit=126, cleanupError=str(cleanup_error), treeCleanup="FAILED")
+finally:
+    if attributes:
+        k.DeleteProcThreadAttributeList(attributes)
+    for handle in (proc.thread, proc.process, job):
+        if handle:
+            k.CloseHandle(handle)
+result.update(ended=now(), elapsedSeconds=time.monotonic() - clock)
+with open(cfg["receipt"], "x", encoding="utf-8") as receipt:
+    json.dump(result, receipt, indent=2)
+    receipt.write("\n")
+print(json.dumps({"command": cfg["name"], "exit": result["exit"], "timedOut": result["timedOut"],
+                  "treeCleanup": result["treeCleanup"], "elapsedSeconds": result["elapsedSeconds"]}), flush=True)
+'@
+[IO.File]::WriteAllText("$logs/process-runner.py",$processRunner)
+function Read-CommandLog($File) {
+    $stream=[IO.FileStream]::new($File,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    $reader=[IO.StreamReader]::new($stream)
+    try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+}
 function Run($Exe, [string[]]$Arguments, $Name, [int[]]$Allowed = @(0)) {
-    $start = Get-Date
-    $info = [Diagnostics.ProcessStartInfo]::new()
-    $info.FileName = $Exe
-    $info.WorkingDirectory = (Get-Location).Path
-    $info.UseShellExecute = $false
-    $info.CreateNoWindow = $true
-    $info.RedirectStandardOutput = $true
-    $info.RedirectStandardError = $true
-    foreach ($arg in $Arguments) { $info.ArgumentList.Add($arg) }
-    $process = [Diagnostics.Process]::Start($info)
-    $stdout = $process.StandardOutput.ReadToEndAsync()
-    $stderr = $process.StandardError.ReadToEndAsync()
-    $process.WaitForExit()
-    $text = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
-    [IO.File]::WriteAllText("$logs/$Name.log", $text)
-    Save-Json "$Name.command.json" @{exe=$Exe; args=$Arguments; cwd=(Get-Location).Path; exit=$process.ExitCode; started=$start.ToUniversalTime().ToString('o'); ended=(Get-Date).ToUniversalTime().ToString('o')}
-    if ($Allowed -notcontains $process.ExitCode) { throw "$Name failed ($($process.ExitCode)); inspect retained command/log" }
+    $remaining=[int][Math]::Floor(($script:buildDeadline-[DateTimeOffset]::UtcNow).TotalSeconds)
+    if ($remaining -le 0) { throw 'Build deadline reached; reserve cleanup and diagnostics' }
+    $limit=if($Name -eq 'upstream-regression'){900}else{180}
+    $limit=[Math]::Min($limit,$remaining)
+    [Console]::WriteLine("COMMAND_BEGIN $Name; timeout=$limit seconds")
+    Save-Json "$Name.input.json" @{name=$Name; exe=$Exe; args=@($Arguments); allowed=@($Allowed); cwd=(Get-Location).Path; stdout="$logs/$Name.stdout.log"; stderr="$logs/$Name.stderr.log"; receipt="$logs/$Name.command.json"; timeoutSeconds=$limit}
+    $supervisorOutput=@(& $script:processRunnerPython -I "$logs/process-runner.py" "$logs/$Name.input.json")
+    $supervisorExit=$LASTEXITCODE
+    foreach($line in $supervisorOutput){[Console]::WriteLine([string]$line)}
+    if($supervisorExit -ne 0){throw "Command supervisor failed: $Name"}
+    $result=Get-Content -LiteralPath "$logs/$Name.command.json" -Raw | ConvertFrom-Json
+    $text=(Read-CommandLog "$logs/$Name.stdout.log")+(Read-CommandLog "$logs/$Name.stderr.log")
+    [IO.File]::WriteAllText("$logs/$Name.log",$text)
+    [Console]::WriteLine("COMMAND_END $Name; exit=$($result.exit); timeout=$($result.timedOut)")
+    if ($result.timedOut -or $Allowed -notcontains $result.exit) { throw "$Name failed ($($result.exit)); inspect retained command/log" }
     return $text
 }
 function Download($Spec, $Path) {
-    Invoke-WebRequest -Uri $Spec.url -OutFile $Path
+    [Console]::WriteLine("DOWNLOAD_BEGIN $($Spec.url)")
+    & curl.exe --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 180 --output $Path $Spec.url
+    if($LASTEXITCODE -ne 0){throw 'Bounded public dependency download failed; no retry'}
     if ((Get-Item -LiteralPath $Path).Length -ne $Spec.bytes -or (Hash $Path) -ne $Spec.sha256) { throw 'Public archive size/hash mismatch' }
+    [Console]::WriteLine("DOWNLOAD_VERIFIED $($Spec.sha256)")
 }
 function Expand-Checked($Archive, $Destination, [string[]]$Prefixes) {
     $root = [IO.Path]::GetFullPath($Destination) + [IO.Path]::DirectorySeparatorChar
@@ -101,6 +297,7 @@ try {
     if ($env:VCToolsVersion -notlike '14.44.*' -or $env:WindowsSDKVersion.TrimEnd('\') -ne $lock.toolchain.sdk -or $env:VSCMD_ARG_TGT_ARCH -ne 'x64') { throw 'Unreviewed toolchain version/architecture' }
     $tools = @{}
     foreach ($tool in @('cl.exe','nmake.exe','dumpbin.exe','python.exe','gh.exe')) { $file=(Get-Command $tool -CommandType Application).Source; $tools[$tool]=@{path=$file; sha256=(Hash $file); version=(Get-Item -LiteralPath $file).VersionInfo.FileVersion} }
+    $script:processRunnerPython=$tools['python.exe'].path
     Save-Json 'toolchain.json' @{imageOS=$env:ImageOS; imageVersion=$env:ImageVersion; runnerOS=$env:RUNNER_OS; runnerArch=$env:RUNNER_ARCH; os=[Environment]::OSVersion.VersionString; visualStudio=$vs; vcTools=$env:VCToolsVersion; sdk=$env:WindowsSDKVersion; implicitOptions=@{CL=$env:CL; _CL_=$env:_CL_; LINK=$env:LINK; _LINK_=$env:_LINK_; INIT=$env:INIT}; tools=$tools}
     Copy-Item -LiteralPath "$PSScriptRoot/lock.json" -Destination "$logs/lock.json"
     $null = Run $tools['cl.exe'].path @('/Bv') 'compiler-version' @(0,2)

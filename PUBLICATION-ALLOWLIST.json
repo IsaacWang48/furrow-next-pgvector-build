@@ -9,8 +9,8 @@
     },
     {
       "file": ".github/workflows/build.yml",
-      "bytes": 2259,
-      "sha256": "91d8c9ba3a67aff6dcbcc5b2e2a7536d0e4f945c64b61d2764e48c9a2b3a14ac"
+      "bytes": 2328,
+      "sha256": "8b3d4ef300381d592c8779d0d0ff226b488e9b8a206e5584c21e61b8212c7ace"
     },
     {
       "file": ".gitignore",
@@ -19,13 +19,13 @@
     },
     {
       "file": "README.md",
-      "bytes": 7147,
-      "sha256": "248c3ff4a84a7d2422686bba0e159621a985fe328d75171b9c708030d2ef4315"
+      "bytes": 7953,
+      "sha256": "d3b6f8f9fd28cede3721f96bc22bdbaf955ac93cc47479e8b2e803027152db71"
     },
     {
       "file": "build.ps1",
-      "bytes": 14520,
-      "sha256": "552ab8c919104081b5a2067eb809caa55641063c9ca686f9f949270e068d45f5"
+      "bytes": 24667,
+      "sha256": "67745c3883309946062d3e1a7030e3531a9f87c76a972bf7962d7888112fb843"
     },
     {
       "file": "cleanup.ps1",
