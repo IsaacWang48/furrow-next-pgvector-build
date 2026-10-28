@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "repository": "IsaacWang48/furrow-next-pgvector-build",
+  "source": {
+    "version": "0.8.2",
+    "commit": "cab9da72c04353f143bb06b42ab70a403daac64a",
+    "url": "https://codeload.github.com/pgvector/pgvector/zip/cab9da72c04353f143bb06b42ab70a403daac64a",
+    "sha256": "e68295cc1361a34f34bd3b7c20b9e0212e8e8292f3bdd4b1f9648a683aa2a678",
+    "bytes": 218720,
+    "prefix": "pgvector-cab9da72c04353f143bb06b42ab70a403daac64a"
+  },
+  "postgres": {
+    "version": "17.11",
+    "url": "https://get.enterprisedb.com/postgresql/postgresql-17.11-1-windows-x64-binaries.zip",
+    "sha256": "6eabdf00d2893713b75db4336a23c3fdf505f056e217ec6e2e95d901750cfea3",
+    "bytes": 340719294,
+    "files": {
+      "bin/postgres.exe": "4125c1e963072d929f6468a449ad184b26d3be7d97cae3181c3d613dace49c8d",
+      "bin/initdb.exe": "6978bdb96e1e515285eb7bbf8915c4a254644107b1fcb44917e52f707dbe798a",
+      "bin/pg_ctl.exe": "5afdea4f4860b52cd03cee4c51be5d034a51f7ed63312acc3b6abee9006fa0ba",
+      "bin/psql.exe": "5bb3fad8a7ff555abff37921a24ee3d9e377c15408b5e7267aa9245596965ca0",
+      "lib/postgres.lib": "d33946ca3024246fa4555f11e286584a803f1acc43fa2ea2f29cbae774dbf865",
+      "include/server/pg_config.h": "54da9035688746bf391daece8abc23a2eb762d9d8063d8185a3f3232658894f8",
+      "include/server/pg_config_os.h": "23044a361c71345b264181b03201fae7ebf61806e089930a6337931538f6845d",
+      "include/server/pg_config_ext.h": "cfd93928aecf95bd40c94241511556e74427707da9652dde3fb8333f08e201f6",
+      "lib/pgxs/src/test/regress/pg_regress.exe": "86208570f9e98e69865154c3f44cf351a267a7a36a0195c2805b7ec590c98a9b"
+    }
+  },
+  "toolchain": {
+    "runner": "windows-2022",
+    "visualStudioMajor": 17,
+    "vcvars": "14.44",
+    "sdk": "10.0.26100.0",
+    "architecture": "x64",
+    "allowedImports": [
+      "postgres.exe",
+      "kernel32.dll"
+    ]
+  }
+}

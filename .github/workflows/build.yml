@@ -1,0 +1,50 @@
+name: Public pgvector 0.8.2 / EDB 17.11 x64
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type public-dependency-build-only
+        required: true
+        type: string
+permissions: {}
+jobs:
+  build:
+    if: github.repository == 'IsaacWang48/furrow-next-pgvector-build' && github.ref == 'refs/heads/main' && !github.event.repository.private && inputs.confirmation == 'public-dependency-build-only'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out build instructions only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Build, inspect, load, regress and stop disposable database
+        run: ./build.ps1
+      - name: Attest tested package
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: out/pgvector-0.8.2-edb17.11-win-x64.zip
+      - name: Retain bundle and independently check attestation policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          Copy-Item -LiteralPath $env:ATTESTATION_BUNDLE -Destination out/attestation.jsonl
+          & gh --version | Out-File out/attestation-verification.log
+          & gh attestation verify out/pgvector-0.8.2-edb17.11-win-x64.zip --repo IsaacWang48/furrow-next-pgvector-build --signer-workflow IsaacWang48/furrow-next-pgvector-build/.github/workflows/build.yml --source-ref refs/heads/main --source-digest $env:GITHUB_SHA --deny-self-hosted-runners --format json 1> out/attestation-verification.json 2>> out/attestation-verification.log
+          if ($LASTEXITCODE -ne 0) { throw 'Attestation verification failed' }
+      - name: Deliver tested package through unmetered job log
+        run: ./emit-log.ps1
+      - name: Verify cleanup even after failure
+        if: always()
+        run: ./cleanup.ps1
+      - name: Preserve public diagnostic logs on failure without artifact storage
+        if: failure()
+        run: ./emit-log.ps1 -DiagnosticsOnly

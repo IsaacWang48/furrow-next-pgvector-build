@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "scope": "Only these public dependency build files plus this manifest; no application Git history",
+  "files": [
+    {
+      "file": ".gitattributes",
+      "bytes": 14,
+      "sha256": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9"
+    },
+    {
+      "file": ".github/workflows/build.yml",
+      "bytes": 2259,
+      "sha256": "91d8c9ba3a67aff6dcbcc5b2e2a7536d0e4f945c64b61d2764e48c9a2b3a14ac"
+    },
+    {
+      "file": ".gitignore",
+      "bytes": 5,
+      "sha256": "a888b9df89402a815bdb15d30c5280b090be11655ab4cc2299ce748d44cd6ed4"
+    },
+    {
+      "file": "README.md",
+      "bytes": 7147,
+      "sha256": "248c3ff4a84a7d2422686bba0e159621a985fe328d75171b9c708030d2ef4315"
+    },
+    {
+      "file": "build.ps1",
+      "bytes": 14520,
+      "sha256": "552ab8c919104081b5a2067eb809caa55641063c9ca686f9f949270e068d45f5"
+    },
+    {
+      "file": "cleanup.ps1",
+      "bytes": 2364,
+      "sha256": "29c16797263a5a764c726d20ff0851609031a8196971dcb2cf95ec84d23b5b64"
+    },
+    {
+      "file": "emit-log.ps1",
+      "bytes": 1835,
+      "sha256": "546fd348da4dcc98e2a43036285c003faca896f6dee4c335be7cf3d12350c11b"
+    },
+    {
+      "file": "inspect_pe.py",
+      "bytes": 6216,
+      "sha256": "8662e27daad155c6e107cc714b320cca515d84e271488a5c419eec0e80766964"
+    },
+    {
+      "file": "lock.json",
+      "bytes": 1857,
+      "sha256": "729125eb1749f265946b6fe708ce950d6d6c2abf24eb7c027ec56cedb57b4a8b"
+    },
+    {
+      "file": "smoke.sql",
+      "bytes": 2095,
+      "sha256": "0e9edb6389baaf1569bf4663a48646384c8e8b35ba236d48b6b482317d7a3aac"
+    }
+  ]
+}
