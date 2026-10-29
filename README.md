@@ -29,3 +29,7 @@ First run40775941622 timed out at30minutes. This candidate preserves exact depen
 ## Unpublished regression-loader repair
 
 Run40789239461 compiled, passed static inspection, loaded vector0.8.2 in exactPG17.11 and passed smoke. The14-case runner itself could not start (0xc0000135), so no regression or signed-artifact success is claimed. This candidate prepends only the exact extracted runtime bin directory to the current runner PATH after MSVC initialization, preserving source/Makefile/DLL/native14/provenance/cleanup/privacy/USD0 policy. It verifies the pinned pg_regress17.11 can start before compilation. No library download, system installation, upstream test edit or automatic retry. Source hashes remain unchanged.
+
+## PostgreSQL 17.11 TAP result validation
+
+Run40795491754 loaded the extension, passed smoke and all14 unchanged upstream cases with native exit0. Packaging stopped because the old validator expected the pre-17 `test ... ok` display. This candidate validates the actual pinned17.11 TAP format: exactly14 successful named results in upstream order, contiguous numbers, one trailing1..14 plan and the completion summary. Failed, missing, duplicate, unknown, skipped, TODO, malformed or aborted cases are rejected. Native nonzero exit still fails before parsing. Upstream tests, expected outputs, source/runtime/toolchain, smoke, PE, cleanup and signed-provenance gates are unchanged. A failed workflow supplies diagnostic evidence only, never an accepted binary. No automatic retry is permitted.

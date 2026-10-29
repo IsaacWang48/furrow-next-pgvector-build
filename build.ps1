@@ -22,6 +22,22 @@ if (Test-Path -LiteralPath $work) { throw 'Fresh task-owned work directory requi
 $null = New-Item -ItemType Directory -Path $work
 function Save-Json($Name, $Value) { $Value | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath "$logs/$Name" -Encoding utf8NoBOM }
 function Hash($Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
+function Assert-UpstreamRegression([string]$Text, [string[]]$Expected) {
+    # The pinned PostgreSQL 17.11 pg_regress emits TAP, not the pre-17 display.
+    # Require every exact case, once, in order, with a complete successful plan.
+    if ($Expected.Count -ne 14 -or @($Expected | Select-Object -Unique).Count -ne 14) { throw 'Expected the fixed fourteen upstream cases' }
+    if ($Text -match '(?im)^\s*(?:not ok\b|Bail out!)' -or $Text -match '(?im)#\s*(?:SKIP|TODO)\b') { throw 'Failed, skipped, TODO or aborted upstream case' }
+    $results=[regex]::Matches($Text,'(?m)^ok[ \t]+([1-9][0-9]*)[ \t]+-[ \t]+([a-z][a-z0-9_]*)[ \t]+[0-9]+[ \t]+ms\r?$')
+    $candidates=[regex]::Matches($Text,'(?m)^\s*(?:not[ \t]+)?ok\b[^\r\n]*')
+    if ($results.Count -ne 14 -or $candidates.Count -ne 14) { throw 'Incomplete or malformed upstream TAP results' }
+    for ($index=0; $index -lt 14; $index++) {
+        if ([int]$results[$index].Groups[1].Value -ne $index+1 -or $results[$index].Groups[2].Value -cne $Expected[$index]) { throw 'Wrong upstream case identity, order or number' }
+    }
+    $plans=[regex]::Matches($Text,'(?m)^[ \t]*[0-9]+\.\.[0-9]+[^\r\n]*')
+    if ($plans.Count -ne 1 -or $plans[0].Value -cne '1..14' -or $plans[0].Index -lt $results[13].Index) { throw 'Missing, duplicate or incorrect upstream TAP plan' }
+    $summaries=[regex]::Matches($Text,'(?m)^# All [^\r\n]*')
+    if ($summaries.Count -ne 1 -or $summaries[0].Value -cne '# All 14 tests passed.' -or $summaries[0].Index -lt $plans[0].Index) { throw 'Missing or inconsistent upstream completion summary' }
+}
 # File redirection prevents a server descendant from retaining a pipe that
 # ReadToEndAsync would otherwise wait on after its parent pg_ctl exits.
 $script:buildDeadline=[DateTimeOffset]::UtcNow.AddMinutes(23)
@@ -327,7 +343,7 @@ try {
         if ((Get-Content -LiteralPath "$logs/smoke.log" -Raw) -notmatch 'PGVECTOR_REMOTE_SMOKE_PASS') { throw 'Smoke sentinel missing' }
         $expected = @('bit','btree','cast','copy','halfvec','hnsw_bit','hnsw_halfvec','hnsw_sparsevec','hnsw_vector','ivfflat_bit','ivfflat_halfvec','ivfflat_vector','sparsevec','vector_type')
         $actual = Get-Content -LiteralPath "$logs/upstream-regression.log" -Raw
-        foreach ($case in $expected) { if ($actual -notmatch ('(?m)^test\s+' + [regex]::Escape($case) + '\s+\.\.\.\s+ok')) { throw "Missing upstream PASS: $case" } }
+        Assert-UpstreamRegression $actual $expected
         foreach ($file in $sourceFiles) { if ((Hash (Join-Path $source $file.file)) -ne $file.sha256) { throw 'Upstream source changed during regression tests' } }
         if ((Hash "$source/sql/vector.sql") -ne (Hash "$source/sql/vector--0.8.2.sql")) { throw 'Generated installation SQL differs from upstream' }
         if ((Hash "$source/vector.dll") -ne (Hash "$env:PGROOT/lib/vector.dll")) { throw 'Tested DLL differs from packaged DLL' }

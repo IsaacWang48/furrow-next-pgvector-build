@@ -19,13 +19,13 @@
     },
     {
       "file": "README.md",
-      "bytes": 8597,
-      "sha256": "16f96a7ad680654b39d59a9306445c7c2ee937f67f4958f1f7c20a9d2f8c3d35"
+      "bytes": 9392,
+      "sha256": "63c10d117cbe8a527c2e9e8973a47ab00ed133b31c7685c703939c33dd72e453"
     },
     {
       "file": "build.ps1",
-      "bytes": 25409,
-      "sha256": "bca059ed6199b0e2fd4321b430058e95852f760110ebeb181e98f3d495dedeee"
+      "bytes": 26873,
+      "sha256": "d91171ccd6518abdb13287a88a852cac108e10862c19b436bf5269afe1ee3d21"
     },
     {
       "file": "cleanup.ps1",
