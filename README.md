@@ -25,3 +25,7 @@ This is a reproducible recipe with pinned source and development inputs, not a c
 ## Unpublished repaired execution candidate — renewed approval required
 
 First run40775941622 timed out at30minutes. This candidate preserves exact dependency inputs/toolchain/native14/signature/budget/privacy gates and the11-file publication boundary. It uses runner-local Python with direct output files and bounded native waits, public download progress/deadlines, a23-minute script deadline/25-minute build step, and failure-or-cancellation diagnostics inside the unchanged30-minute job. Source of the embedded supervisor is retained in the package provenance. No local software installation, compiler execution, signature waiver or automatic retry. Root cause of the real stall remains unproven; the inherited-pipe race is a separately testable mechanism. No candidate file has been pushed or run.
+
+## Unpublished regression-loader repair
+
+Run40789239461 compiled, passed static inspection, loaded vector0.8.2 in exactPG17.11 and passed smoke. The14-case runner itself could not start (0xc0000135), so no regression or signed-artifact success is claimed. This candidate prepends only the exact extracted runtime bin directory to the current runner PATH after MSVC initialization, preserving source/Makefile/DLL/native14/provenance/cleanup/privacy/USD0 policy. It verifies the pinned pg_regress17.11 can start before compilation. No library download, system installation, upstream test edit or automatic retry. Source hashes remain unchanged.

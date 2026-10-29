@@ -295,6 +295,11 @@ try {
     $allowed = @('PATH','INCLUDE','LIB','LIBPATH','VCToolsInstallDir','VCToolsVersion','WindowsSdkDir','WindowsSDKVersion','VSCMD_VER','VSCMD_ARG_TGT_ARCH','UCRTVersion','UniversalCRTSdkDir')
     foreach ($line in $lines) { if ($line -match '^([^=]+)=(.*)$' -and $allowed -contains $Matches[1]) { [Environment]::SetEnvironmentVariable($Matches[1],$Matches[2],'Process') } }
     if ($env:VCToolsVersion -notlike '14.44.*' -or $env:WindowsSDKVersion.TrimEnd('\') -ne $lock.toolchain.sdk -or $env:VSCMD_ARG_TGT_ARCH -ne 'x64') { throw 'Unreviewed toolchain version/architecture' }
+    # pg_regress lives under lib/pgxs, while its exact-package DLLs live in bin.
+    # Apply after VsDevCmd imports PATH so the private runtime wins the lookup.
+    $runtimeBin=[IO.Path]::GetFullPath((Join-Path $env:PGROOT 'bin'))
+    $env:PATH=$runtimeBin+[IO.Path]::PathSeparator+$env:PATH
+    Save-Json 'regression-dll-path.json' @{firstPath=$runtimeBin; libpqSha256=(Hash (Join-Path $runtimeBin 'libpq.dll')); source='Exact hash-verified EDB17.11 archive'; scope='Current runner process only'}
     $tools = @{}
     foreach ($tool in @('cl.exe','nmake.exe','dumpbin.exe','python.exe','gh.exe')) { $file=(Get-Command $tool -CommandType Application).Source; $tools[$tool]=@{path=$file; sha256=(Hash $file); version=(Get-Item -LiteralPath $file).VersionInfo.FileVersion} }
     $script:processRunnerPython=$tools['python.exe'].path
@@ -303,6 +308,9 @@ try {
     $null = Run $tools['cl.exe'].path @('/Bv') 'compiler-version' @(0,2)
     $null = Run $tools['python.exe'].path @('--version') 'python-version'
     $null = Run "$env:PGROOT/bin/postgres.exe" @('--version') 'postgres-version'
+    $regressVersion=Run "$env:PGROOT/lib/pgxs/src/test/regress/pg_regress.exe" @('--version') 'regression-runner-version'
+    if($regressVersion.Trim() -ne 'pg_regress (PostgreSQL) 17.11'){throw 'Wrong or unavailable exact regression runner'}
+
     Push-Location $source
     try {
         $null = Run $tools['nmake.exe'].path @('/NOLOGO','/F','Makefile.win') 'build'
